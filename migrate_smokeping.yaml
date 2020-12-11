@@ -1,0 +1,70 @@
+---
+- hosts: old_monitoring
+  tasks:
+
+    - name: find rrds to back up
+      find:
+        paths: '{{rrd_path}}'
+        patterns: '*.rrd'
+        recurse: true
+      register: rrds
+
+    - name: stop smokeping
+      service: name=smokeping state=stopped
+
+    - name: back up rrd to xml
+      command: "rrdtool dump {{item.path}} {{item.path}}.xml"
+      loop: "{{rrds.files}}"
+
+    - name: start smokeping
+      service: name=smokeping state=started
+
+    - name: fetch xml
+      fetch:
+        src: "{{item.path | regex_replace('$','.xml')}}"
+        dest: /smokeping_tmp/
+      loop: "{{rrds.files}}"
+
+- hosts: new_monitoring
+  tasks:
+
+    - name: copy xml
+      copy:
+        src: '/smokeping_tmp/{{ansible_hostname | regex_replace("2$", "1")}}{{rrd_path}}'
+        dest: '{{rrd_path}}'
+
+    - name: find xml to restore
+      find:
+        paths: '{{rrd_path}}'
+        patterns: '*.rrd.xml'
+        recurse: true
+      register: xmls
+
+    - name: find rrds to remove
+      find:
+        paths: '{{rrd_path}}'
+        patterns: '*.rrd'
+        recurse: true
+      register: rrds
+
+    - name: stop smokeping
+      service: name=smokeping state=stopped
+
+    - name: remove old rrds
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ rrds.files }}"
+
+    - name: restore xml
+      command: 'rrdtool restore {{item.path}} {{item.path | regex_replace("\.xml$", "")}}'
+      loop: "{{xmls.files}}"
+
+    - name: start smokeping
+      service: name=smokeping state=started
+
+    - name: remove xml
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ xmls.files }}"
